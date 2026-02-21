@@ -66,14 +66,8 @@ if prompt := st.chat_input("Describe your symptoms, ask for a diet plan, or find
 # Get response from Gemini
     with st.chat_message("assistant"):
         with st.spinner("Analyzing symptoms..."):
-            try:
-                # Try to get the response
-                response = st.session_state.chat_session.send_message(contextual_prompt)
-                st.markdown(response.text)
-                
-                # Add response to UI history ONLY if successful
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
-                
-            except Exception as e:
-                # If the API crashes (like hitting the rate limit), show a polite message instead of red text
-                st.error("Whoops! 🚦 The AI is receiving too many requests right now. Please wait about 60 seconds and try again.")
+            response = st.session_state.chat_session.send_message(contextual_prompt)
+        st.markdown(response.text)
+        
+    # Add response to UI history
+    st.session_state.messages.append({"role": "assistant", "content": response.text})
