@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import streamlit as st
+import time
 import google.generativeai as genai
 
 # 1. Load API key securely
@@ -103,7 +104,6 @@ if prompt := st.chat_input("Describe your symptoms, ask for a diet plan, or find
         doctor_data = get_local_doctors()
         contextual_prompt += f"\n\n[System Note: Here is the local doctor directory:\n{doctor_data}\nRecommend a suitable one if applicable.]"
 
- import time
 
 # Get response from Gemini — with retry logic
 response = None
