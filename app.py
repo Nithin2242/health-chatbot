@@ -103,22 +103,29 @@ if prompt := st.chat_input("Describe your symptoms, ask for a diet plan, or find
         doctor_data = get_local_doctors()
         contextual_prompt += f"\n\n[System Note: Here is the local doctor directory:\n{doctor_data}\nRecommend a suitable one if applicable.]"
 
-    # Get response from Gemini — with error handling
-    response = None
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
+ import time
+
+# Get response from Gemini — with retry logic
+response = None
+with st.chat_message("assistant"):
+    with st.spinner("Thinking..."):
+        for attempt in range(3):  # Try up to 3 times
             try:
                 response = st.session_state.chat_session.send_message(contextual_prompt)
                 st.markdown(response.text)
+                break  # Success — exit the loop
             except Exception as e:
                 error_msg = str(e)
                 if "ResourceExhausted" in error_msg or "429" in error_msg:
-                    st.error("⚠️ API rate limit reached. Please wait a moment and try again.")
+                    if attempt < 2:
+                        wait_time = (attempt + 1) * 10  # 10s, then 20s
+                        st.warning(f"⏳ Rate limit hit. Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        st.error("⚠️ Still rate limited. Please wait 1 minute and try again.")
                 elif "InvalidArgument" in error_msg:
                     st.error("⚠️ Invalid request. Please rephrase your message.")
+                    break
                 else:
                     st.error("⚠️ Something went wrong. Please try again.")
-
-    # Save response to history
-    if response:
-        st.session_state.messages.append({"role": "assistant", "content": response.text})
+                    break
