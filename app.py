@@ -63,11 +63,17 @@ if prompt := st.chat_input("Describe your symptoms, ask for a diet plan, or find
         # Instruct Gemini to dynamically determine the specialty and find real hospitals
         contextual_prompt += f"\n\n[System Note: The user is looking for medical care in {user_city}. First, identify the exact medical specialty required for their specific symptoms. Then, use your extensive knowledge base to recommend 2-3 real, top-rated hospitals or clinics in {user_city} that specialize in this area.]"
         
-    # Get response from Gemini
+# Get response from Gemini
     with st.chat_message("assistant"):
         with st.spinner("Analyzing symptoms..."):
-            response = st.session_state.chat_session.send_message(contextual_prompt)
-        st.markdown(response.text)
-        
-    # Add response to UI history
-    st.session_state.messages.append({"role": "assistant", "content": response.text})
+            try:
+                # Try to get the response
+                response = st.session_state.chat_session.send_message(contextual_prompt)
+                st.markdown(response.text)
+                
+                # Add response to UI history ONLY if successful
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                
+            except Exception as e:
+                # If the API crashes (like hitting the rate limit), show a polite message instead of red text
+                st.error("Whoops! 🚦 The AI is receiving too many requests right now. Please wait about 60 seconds and try again.")
