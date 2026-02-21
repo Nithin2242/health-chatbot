@@ -75,7 +75,25 @@ if any(word in prompt.lower() for word in keywords):
         # Inject the database results invisibly into the prompt
         contextual_prompt += f"\n\n[System Note: The user may need a doctor. Here is the local directory:\n{doctor_data}\nRecommend a suitable one if applicable.]"
         
-# Get response from Gemini
+# 6. The Main Chat Loop
+if prompt := st.chat_input("Describe your symptoms, ask for a diet plan, or find a doctor..."):
+    
+    # Display user prompt in UI
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Add to UI history
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    # Check if we need to query the doctor database
+    contextual_prompt = prompt
+    keywords = ["doctor", "specialist", "hospital", "clinic", "pain", "injury"]
+    if any(word in prompt.lower() for word in keywords):
+        # Fetch doctors only for the selected city
+        doctor_data = get_local_doctors(user_city)
+        contextual_prompt += f"\n\n[System Note: The user may need a doctor. Here is the local directory for {user_city}:\n{doctor_data}\nRecommend a suitable one if applicable.]"
+        
+    # Get response from Gemini
     with st.chat_message("assistant"):
         with st.spinner("Analyzing symptoms..."):
             response = st.session_state.chat_session.send_message(contextual_prompt)
