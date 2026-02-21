@@ -68,9 +68,10 @@ if prompt := st.chat_input("Describe your symptoms, ask for a diet plan, or find
         # Inject the database results invisibly into the prompt
         contextual_prompt += f"\n\n[System Note: The user may need a doctor. Here is the local directory:\n{doctor_data}\nRecommend a suitable one if applicable.]"
         
-    # Get response from Gemini
+# Get response from Gemini
     with st.chat_message("assistant"):
-        response = st.session_state.chat_session.send_message(contextual_prompt)
+        with st.spinner("Analyzing symptoms..."):
+            response = st.session_state.chat_session.send_message(contextual_prompt)
         st.markdown(response.text)
         
     # Add response to UI history
