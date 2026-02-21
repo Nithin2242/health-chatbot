@@ -12,7 +12,11 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 # 2. Set up the Streamlit Page
 st.set_page_config(page_title="AI Healthcare Assistant", page_icon="🩺")
 st.title("🩺 AI Healthcare Assistant")
-
+# --- Location Sidebar ---
+user_city = st.sidebar.selectbox(
+    "📍 Select your current city:",
+    ["Bangalore", "Mumbai", "Delhi", "Chennai"]
+)
 # 3. Define the AI Persona
 system_instruction = """
 You are a helpful and cautious AI Healthcare Assistant. You can provide general dietary advice, check mild symptoms, and give standard information on medicines. 
@@ -27,11 +31,12 @@ model = genai.GenerativeModel(
     system_instruction=system_instruction
 )
 
-# 4. Helper function to fetch doctors from our SQLite database
-def get_local_doctors():
+# Pass the selected city into the function
+def get_local_doctors(city):
     conn = sqlite3.connect('healthcare.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT doctor_name, specialty, hospital_clinic, location, contact_number FROM doctors")
+    # Dynamic SQL WHERE clause
+    cursor.execute("SELECT doctor_name, specialty, hospital_clinic, location, contact_number FROM doctors WHERE city = ?", (city,))
     doctors = cursor.fetchall()
     conn.close()
     
@@ -63,8 +68,10 @@ if prompt := st.chat_input("Describe your symptoms, ask for a diet plan, or find
     # Check if we need to query the doctor database
     contextual_prompt = prompt
     keywords = ["doctor", "specialist", "hospital", "clinic", "pain", "injury"]
-    if any(word in prompt.lower() for word in keywords):
-        doctor_data = get_local_doctors()
+if any(word in prompt.lower() for word in keywords):
+        # Fetch doctors only for the selected city
+        doctor_data = get_local_doctors(user_city)
+        contextual_prompt += f"\n\n[System Note: The user may need a doctor. Here is the local directory for {user_city}:\n{doctor_data}\nRecommend a suitable one if applicable.]"
         # Inject the database results invisibly into the prompt
         contextual_prompt += f"\n\n[System Note: The user may need a doctor. Here is the local directory:\n{doctor_data}\nRecommend a suitable one if applicable.]"
         
