@@ -5,7 +5,7 @@ import streamlit as st
 import google.generativeai as genai
 
 # 1. Load API key
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+genai.configure(api_key=st.secrets["AIzaSyBOIMc4waOX3Fn6Dm_H1AMv4msjEqVT3jM"])
 
 # 2. Page config
 st.set_page_config(page_title="AI Healthcare Assistant", page_icon="🩺")
