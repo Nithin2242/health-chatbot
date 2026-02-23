@@ -1,6 +1,9 @@
 import sqlite3
+import numpy as np
 import streamlit as st
 from groq import Groq
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # ── 1. GROQ CLIENT ──────────────────────────────────────────────
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -26,16 +29,16 @@ def init_db():
     c.execute("SELECT COUNT(*) FROM doctors")
     if c.fetchone()[0] == 0:
         doctors = [
-            ("Dr. Priya Sharma",  "General Physician", "Apollo Clinic",       "Bangalore", "080-12345678"),
-            ("Dr. Rajan Mehta",   "Cardiologist",      "Fortis Hospital",     "Bangalore", "080-87654321"),
-            ("Dr. Anita Rao",     "Neurologist",       "Manipal Hospital",    "Bangalore", "080-11223344"),
-            ("Dr. Suresh Kumar",  "Dermatologist",     "Columbia Asia",       "Bangalore", "080-55667788"),
-            ("Dr. Meena Iyer",    "Nutritionist",      "Narayana Health",     "Bangalore", "080-99887766"),
-            ("Dr. Arvind Nair",   "Orthopedic",        "Sakra World",         "Bangalore", "080-33445566"),
-            ("Dr. Kavitha Reddy", "Gynecologist",      "Cloudnine Hospital",  "Bangalore", "080-77889900"),
-            ("Dr. Sanjay Patel",  "Psychiatrist",      "NIMHANS",             "Bangalore", "080-22334455"),
-            ("Dr. Lakshmi Das",   "Pediatrician",      "Indira Gandhi CH",    "Bangalore", "080-66778899"),
-            ("Dr. Mohan Raj",     "Ophthalmologist",   "Narayana Nethralaya", "Bangalore", "080-44556677"),
+            ("Dr. Priya Sharma",  "General Physician - treats fever, cold, flu, general illness, body pain, fatigue", "Apollo Clinic",       "Bangalore", "080-12345678"),
+            ("Dr. Rajan Mehta",   "Cardiologist - treats chest pain, heart disease, blood pressure, palpitations",      "Fortis Hospital",     "Bangalore", "080-87654321"),
+            ("Dr. Anita Rao",     "Neurologist - treats headache, migraine, dizziness, seizures, nerve pain",           "Manipal Hospital",    "Bangalore", "080-11223344"),
+            ("Dr. Suresh Kumar",  "Dermatologist - treats skin rash, acne, eczema, hair loss, skin infections",         "Columbia Asia",       "Bangalore", "080-55667788"),
+            ("Dr. Meena Iyer",    "Nutritionist - diet plans, weight loss, diabetes diet, obesity, nutrition advice",   "Narayana Health",     "Bangalore", "080-99887766"),
+            ("Dr. Arvind Nair",   "Orthopedic - treats joint pain, back pain, bone fracture, arthritis, knee pain",     "Sakra World",         "Bangalore", "080-33445566"),
+            ("Dr. Kavitha Reddy", "Gynecologist - treats women health, pregnancy, menstrual issues, PCOS",              "Cloudnine Hospital",  "Bangalore", "080-77889900"),
+            ("Dr. Sanjay Patel",  "Psychiatrist - treats anxiety, depression, stress, mental health, insomnia",         "NIMHANS",             "Bangalore", "080-22334455"),
+            ("Dr. Lakshmi Das",   "Pediatrician - treats children illness, child fever, kids health, infant care",      "Indira Gandhi CH",    "Bangalore", "080-66778899"),
+            ("Dr. Mohan Raj",     "Ophthalmologist - treats eye pain, vision problems, eye infection, blurred vision",  "Narayana Nethralaya", "Bangalore", "080-44556677"),
         ]
         c.executemany(
             "INSERT INTO doctors (name, specialty, hospital, location, contact) VALUES (?,?,?,?,?)",
@@ -44,24 +47,61 @@ def init_db():
     conn.commit()
     conn.close()
 
-def get_doctors():
+def get_all_doctors():
     conn = sqlite3.connect("healthcare.db")
     c = conn.cursor()
     c.execute("SELECT name, specialty, hospital, location, contact FROM doctors")
     rows = c.fetchall()
     conn.close()
-    return "\n".join([f"- {r[0]} ({r[1]}) at {r[2]}, {r[3]}. Contact: {r[4]}" for r in rows])
+    return rows
 
 init_db()
 
-# ── 4. SYSTEM PROMPT ────────────────────────────────────────────
+# ── 4. RAG — LOAD EMBEDDING MODEL ───────────────────────────────
+@st.cache_resource
+def load_embedding_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+@st.cache_resource
+def build_doctor_embeddings():
+    model = load_embedding_model()
+    doctors = get_all_doctors()
+    # Embed each doctor's specialty description
+    specialty_texts = [doc[1] for doc in doctors]
+    embeddings = model.encode(specialty_texts)
+    return doctors, embeddings
+
+def get_relevant_doctors(user_prompt, top_k=3):
+    """RAG: Retrieve top_k most relevant doctors based on symptom similarity."""
+    model = load_embedding_model()
+    doctors, doctor_embeddings = build_doctor_embeddings()
+
+    # Embed the user's prompt
+    prompt_embedding = model.encode([user_prompt])
+
+    # Calculate cosine similarity between prompt and all doctor specialties
+    similarities = cosine_similarity(prompt_embedding, doctor_embeddings)[0]
+
+    # Get top_k most similar doctors
+    top_indices = np.argsort(similarities)[::-1][:top_k]
+
+    # Only return doctors above a similarity threshold
+    results = []
+    for idx in top_indices:
+        if similarities[idx] > 0.2:  # threshold to avoid irrelevant matches
+            doc = doctors[idx]
+            results.append(f"- {doc[0]} ({doc[1].split(' - ')[0]}) at {doc[2]}, {doc[3]}. Contact: {doc[4]}")
+
+    return "\n".join(results) if results else ""
+
+# ── 5. SYSTEM PROMPT ────────────────────────────────────────────
 SYSTEM_PROMPT = """You are a warm, helpful, and responsible AI Healthcare Assistant named HealthBot.
 
 You have four core capabilities:
 1. SYMPTOM CHECKER - Describe possible causes for symptoms. Never diagnose definitively.
 2. DIET & NUTRITION - Provide personalized diet plans based on health goals or conditions.
 3. MEDICINE INFO - Give general info about medicines: uses, side effects. Never prescribe.
-4. FIND LOCAL DOCTORS - Use the directory in context to recommend suitable specialists.
+4. FIND LOCAL DOCTORS - When a doctor directory is provided in context, recommend the most suitable one based on the user's symptoms. Only recommend doctors when relevant.
 
 RULES:
 - Always be empathetic and friendly.
@@ -70,11 +110,11 @@ RULES:
 - If someone describes an emergency (chest pain, difficulty breathing), tell them to call 112 immediately.
 - Keep responses clear and well structured. Use bullet points where helpful."""
 
-# ── 5. SESSION STATE ────────────────────────────────────────────
+# ── 6. SESSION STATE ────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# ── 6. SIDEBAR ──────────────────────────────────────────────────
+# ── 7. SIDEBAR ──────────────────────────────────────────────────
 with st.sidebar:
     st.title("🩺 HealthBot")
     st.markdown("Your AI-powered health companion.")
@@ -105,7 +145,7 @@ with st.sidebar:
         st.rerun()
     st.caption("⚠️ For informational purposes only. Always consult a qualified doctor.")
 
-# ── 7. MAIN UI ──────────────────────────────────────────────────
+# ── 8. MAIN UI ──────────────────────────────────────────────────
 st.markdown("## 🩺 AI Healthcare Assistant")
 st.caption("Ask me about symptoms, diet plans, medicines, or finding a doctor.")
 
@@ -129,22 +169,21 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# ── 8. SEND MESSAGE ─────────────────────────────────────────────
+# ── 9. SEND MESSAGE ─────────────────────────────────────────────
 def send_message(prompt):
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-# Always inject doctor directory so AI can recommend based on symptoms
-    contextual_prompt = prompt + f"""
+    # ── RAG: Retrieve relevant doctors based on symptom similarity ──
+    relevant_doctors = get_relevant_doctors(prompt)
+    contextual_prompt = prompt
+    if relevant_doctors:
+        contextual_prompt += f"\n\n[Relevant doctors retrieved for these symptoms:\n{relevant_doctors}\nRecommend the most suitable one if appropriate.]"
 
-[Local doctor directory — recommend the most suitable doctor based on the user's symptoms or needs. 
-Only suggest a doctor if it's relevant to what the user is describing. Do not list all doctors:
-{get_doctors()}]"""
-
-    # Build messages list for Groq (includes full history)
+    # Build messages for Groq with full conversation history
     groq_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for msg in st.session_state.messages[:-1]:  # all except the latest
+    for msg in st.session_state.messages[:-1]:
         groq_messages.append({"role": msg["role"], "content": msg["content"]})
     groq_messages.append({"role": "user", "content": contextual_prompt})
 
@@ -172,7 +211,7 @@ Only suggest a doctor if it's relevant to what the user is describing. Do not li
     if response:
         st.session_state.messages.append({"role": "assistant", "content": response})
 
-# ── 9. HANDLE INPUT ─────────────────────────────────────────────
+# ── 10. HANDLE INPUT ────────────────────────────────────────────
 if "pending_prompt" in st.session_state:
     prompt = st.session_state.pop("pending_prompt")
     send_message(prompt)
