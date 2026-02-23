@@ -161,33 +161,23 @@ def send_message(prompt):
     response = None
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            for attempt in range(3):
-                try:
-                    result = client.models.generate_content(
-                        model="gemini-2.0-flash-lite",
-                        contents=full_prompt
-                    )
-                    response = result.text
-                    st.markdown(response)
-                    break
-                except Exception as e:
-                    err = str(e)
-                    if "ResourceExhausted" in err or "429" in err:
-                        if attempt < 2:
-                            wait = (attempt + 1) * 10
-                            st.warning(f"⏳ High demand, retrying in {wait}s...")
-                            time.sleep(wait)
-                        else:
-                            st.error("⚠️ Service busy. Please wait a minute and try again.")
-                    elif "API_KEY_INVALID" in err or "API key not valid" in err:
-                        st.error("⚠️ Invalid API key. Please check your Streamlit Secrets.")
-                        break
-                    elif "NotFound" in err:
-                        st.error("⚠️ Model not available. Try updating your API key.")
-                        break
-                    else:
-                        st.error(f"⚠️ Error: {err}")
-                        break
+           try:
+                result = client.models.generate_content(
+                    model="gemini-2.0-flash-lite",
+                    contents=full_prompt
+                )
+                response = result.text
+                st.markdown(response)
+            except Exception as e:
+                err = str(e)
+                if "ResourceExhausted" in err or "429" in err:
+                    st.error("⚠️ Too many requests. Please wait 1 minute and try again.")
+                elif "API_KEY_INVALID" in err:
+                    st.error("⚠️ Invalid API key. Check your Streamlit Secrets.")
+                elif "NotFound" in err:
+                    st.error("⚠️ Model not available for your API key.")
+                else:
+                    st.error(f"⚠️ Error: {err}")
 
     if response:
         st.session_state.messages.append({"role": "assistant", "content": response})
