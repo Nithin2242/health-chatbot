@@ -95,7 +95,7 @@ RULES YOU MUST ALWAYS FOLLOW:
 @st.cache_resource
 def load_model():
     return genai.GenerativeModel(
-        model_name="gemini-pro",
+        model_name="gemini-1.0-pro",
         system_instruction=SYSTEM_PROMPT
     )
 
