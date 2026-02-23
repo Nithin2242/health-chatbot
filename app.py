@@ -1,9 +1,9 @@
 import sqlite3
 import streamlit as st
-from google import genai
+from groq import Groq
 
-# ── 1. API CLIENT ───────────────────────────────────────────────
-client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+# ── 1. GROQ CLIENT ──────────────────────────────────────────────
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 # ── 2. PAGE CONFIG ──────────────────────────────────────────────
 st.set_page_config(
@@ -67,14 +67,12 @@ RULES:
 - Always be empathetic and friendly.
 - Always end with a disclaimer to consult a real doctor.
 - Never give a definitive diagnosis or prescribe dosages.
-- If someone describes an emergency (chest pain, difficulty breathing), tell them to call 112.
+- If someone describes an emergency (chest pain, difficulty breathing), tell them to call 112 immediately.
 - Keep responses clear and well structured. Use bullet points where helpful."""
 
 # ── 5. SESSION STATE ────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "history" not in st.session_state:
-    st.session_state.history = []
 
 # ── 6. SIDEBAR ──────────────────────────────────────────────────
 with st.sidebar:
@@ -104,7 +102,6 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ Clear Chat", use_container_width=True):
         st.session_state.messages = []
-        st.session_state.history = []
         st.rerun()
     st.caption("⚠️ For informational purposes only. Always consult a qualified doctor.")
 
@@ -138,6 +135,7 @@ def send_message(prompt):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
+    # Add doctor context if needed
     contextual_prompt = prompt
     doctor_keywords = ["doctor", "specialist", "find", "hospital", "clinic",
                        "neurologist", "cardiologist", "dermatologist",
@@ -146,37 +144,35 @@ def send_message(prompt):
     if any(word in prompt.lower() for word in doctor_keywords):
         contextual_prompt += f"\n\n[Local doctor directory:\n{get_doctors()}]"
 
-    full_prompt = SYSTEM_PROMPT + "\n\n"
-    for msg in st.session_state.history:
-        role = "User" if msg["role"] == "user" else "HealthBot"
-        full_prompt += f"{role}: {msg['content']}\n"
-    full_prompt += f"User: {contextual_prompt}\nHealthBot:"
+    # Build messages list for Groq (includes full history)
+    groq_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for msg in st.session_state.messages[:-1]:  # all except the latest
+        groq_messages.append({"role": msg["role"], "content": msg["content"]})
+    groq_messages.append({"role": "user", "content": contextual_prompt})
 
+    # Get response
     response = None
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                result = client.models.generate_content(
-                    model="gemini-2.0-flash-lite",
-                    contents=full_prompt
+                result = client.chat.completions.create(
+                    model="llama3-8b-8192",
+                    messages=groq_messages,
+                    max_tokens=1024,
                 )
-                response = result.text
+                response = result.choices[0].message.content
                 st.markdown(response)
             except Exception as e:
                 err = str(e)
-                if "ResourceExhausted" in err or "429" in err:
-                    st.error("⚠️ Too many requests. Please wait 1 minute and try again.")
-                elif "API_KEY_INVALID" in err or "API key not valid" in err:
-                    st.error("⚠️ Invalid API key. Check your Streamlit Secrets.")
-                elif "NotFound" in err:
-                    st.error("⚠️ Model not available for your API key.")
+                if "rate_limit" in err.lower() or "429" in err:
+                    st.error("⚠️ Too many requests. Please wait a moment and try again.")
+                elif "invalid_api_key" in err.lower() or "auth" in err.lower():
+                    st.error("⚠️ Invalid API key. Please check your Streamlit Secrets.")
                 else:
                     st.error(f"⚠️ Error: {err}")
 
     if response:
         st.session_state.messages.append({"role": "assistant", "content": response})
-        st.session_state.history.append({"role": "user", "content": prompt})
-        st.session_state.history.append({"role": "assistant", "content": response})
 
 # ── 9. HANDLE INPUT ─────────────────────────────────────────────
 if "pending_prompt" in st.session_state:
