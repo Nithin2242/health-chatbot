@@ -1,5 +1,4 @@
 import sqlite3
-import time
 import streamlit as st
 from google import genai
 
@@ -68,7 +67,7 @@ RULES:
 - Always be empathetic and friendly.
 - Always end with a disclaimer to consult a real doctor.
 - Never give a definitive diagnosis or prescribe dosages.
-- If someone describes an emergency (chest pain, difficulty breathing), immediately tell them to call 112.
+- If someone describes an emergency (chest pain, difficulty breathing), tell them to call 112.
 - Keep responses clear and well structured. Use bullet points where helpful."""
 
 # ── 5. SESSION STATE ────────────────────────────────────────────
@@ -113,7 +112,6 @@ with st.sidebar:
 st.markdown("## 🩺 AI Healthcare Assistant")
 st.caption("Ask me about symptoms, diet plans, medicines, or finding a doctor.")
 
-# Welcome message
 if not st.session_state.messages:
     with st.chat_message("assistant"):
         st.markdown("""
@@ -130,18 +128,16 @@ I can help you with:
 > ⚠️ *I'm an AI assistant, not a medical professional. Always consult a real doctor for diagnosis and treatment.*
         """)
 
-# Display chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# ── 8. SEND MESSAGE FUNCTION ────────────────────────────────────
+# ── 8. SEND MESSAGE ─────────────────────────────────────────────
 def send_message(prompt):
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Add doctor context if needed
     contextual_prompt = prompt
     doctor_keywords = ["doctor", "specialist", "find", "hospital", "clinic",
                        "neurologist", "cardiologist", "dermatologist",
@@ -150,18 +146,16 @@ def send_message(prompt):
     if any(word in prompt.lower() for word in doctor_keywords):
         contextual_prompt += f"\n\n[Local doctor directory:\n{get_doctors()}]"
 
-    # Build full conversation with history for context
     full_prompt = SYSTEM_PROMPT + "\n\n"
     for msg in st.session_state.history:
         role = "User" if msg["role"] == "user" else "HealthBot"
         full_prompt += f"{role}: {msg['content']}\n"
     full_prompt += f"User: {contextual_prompt}\nHealthBot:"
 
-    # Get AI response with retry
     response = None
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-           try:
+            try:
                 result = client.models.generate_content(
                     model="gemini-2.0-flash-lite",
                     contents=full_prompt
@@ -172,7 +166,7 @@ def send_message(prompt):
                 err = str(e)
                 if "ResourceExhausted" in err or "429" in err:
                     st.error("⚠️ Too many requests. Please wait 1 minute and try again.")
-                elif "API_KEY_INVALID" in err:
+                elif "API_KEY_INVALID" in err or "API key not valid" in err:
                     st.error("⚠️ Invalid API key. Check your Streamlit Secrets.")
                 elif "NotFound" in err:
                     st.error("⚠️ Model not available for your API key.")
