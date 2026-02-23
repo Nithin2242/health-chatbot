@@ -1,4 +1,5 @@
 import sqlite3
+import base64
 import numpy as np
 import streamlit as st
 from groq import Groq
@@ -66,42 +67,32 @@ def load_embedding_model():
 def build_doctor_embeddings():
     model = load_embedding_model()
     doctors = get_all_doctors()
-    # Embed each doctor's specialty description
     specialty_texts = [doc[1] for doc in doctors]
     embeddings = model.encode(specialty_texts)
     return doctors, embeddings
 
 def get_relevant_doctors(user_prompt, top_k=3):
-    """RAG: Retrieve top_k most relevant doctors based on symptom similarity."""
     model = load_embedding_model()
     doctors, doctor_embeddings = build_doctor_embeddings()
-
-    # Embed the user's prompt
     prompt_embedding = model.encode([user_prompt])
-
-    # Calculate cosine similarity between prompt and all doctor specialties
     similarities = cosine_similarity(prompt_embedding, doctor_embeddings)[0]
-
-    # Get top_k most similar doctors
     top_indices = np.argsort(similarities)[::-1][:top_k]
-
-    # Only return doctors above a similarity threshold
     results = []
     for idx in top_indices:
-        if similarities[idx] > 0.2:  # threshold to avoid irrelevant matches
+        if similarities[idx] > 0.2:
             doc = doctors[idx]
             results.append(f"- {doc[0]} ({doc[1].split(' - ')[0]}) at {doc[2]}, {doc[3]}. Contact: {doc[4]}")
-
     return "\n".join(results) if results else ""
 
 # ── 5. SYSTEM PROMPT ────────────────────────────────────────────
 SYSTEM_PROMPT = """You are a warm, helpful, and responsible AI Healthcare Assistant named HealthBot.
 
-You have four core capabilities:
+You have five core capabilities:
 1. SYMPTOM CHECKER - Describe possible causes for symptoms. Never diagnose definitively.
 2. DIET & NUTRITION - Provide personalized diet plans based on health goals or conditions.
 3. MEDICINE INFO - Give general info about medicines: uses, side effects. Never prescribe.
 4. FIND LOCAL DOCTORS - When a doctor directory is provided in context, recommend the most suitable one based on the user's symptoms. Only recommend doctors when relevant.
+5. IMAGE ANALYSIS - When the user shares a medical image (skin rash, wound, eye, report, etc.), describe what you observe visually and suggest possible conditions. Never diagnose definitively.
 
 RULES:
 - Always be empathetic and friendly.
@@ -125,6 +116,7 @@ with st.sidebar:
 - 🥗 **Diet & Nutrition Plans**
 - 💊 **Medicine Information**
 - 🏥 **Find Local Doctors**
+- 📷 **Analyze Medical Photos**
     """)
     st.divider()
     st.markdown("### Quick Questions")
@@ -147,7 +139,7 @@ with st.sidebar:
 
 # ── 8. MAIN UI ──────────────────────────────────────────────────
 st.markdown("## 🩺 AI Healthcare Assistant")
-st.caption("Ask me about symptoms, diet plans, medicines, or finding a doctor.")
+st.caption("Ask me about symptoms, diet plans, medicines, finding a doctor, or upload a photo for analysis.")
 
 if not st.session_state.messages:
     with st.chat_message("assistant"):
@@ -159,33 +151,90 @@ I can help you with:
 - 🥗 Creating personalized diet plans
 - 💊 Providing medicine information
 - 🏥 Finding local doctors in Bangalore
+- 📷 Analyzing medical photos (skin, wounds, eyes, reports)
 
-**How are you feeling today? Tell me your symptoms or ask me anything!**
+**How are you feeling today? Tell me your symptoms, ask me anything, or upload a photo below!**
 
 > ⚠️ *I'm an AI assistant, not a medical professional. Always consult a real doctor for diagnosis and treatment.*
         """)
 
+# Display chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
+        if msg.get("image"):
+            st.image(msg["image"], caption="Uploaded Image", use_container_width=True)
         st.markdown(msg["content"])
 
-# ── 9. SEND MESSAGE ─────────────────────────────────────────────
-def send_message(prompt):
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# ── 9. IMAGE UPLOAD SECTION ─────────────────────────────────────
+with st.expander("📷 Upload a medical photo for analysis", expanded=False):
+    st.caption("Supported: skin rashes, wounds, eye conditions, medical reports, X-rays, etc.")
+    uploaded_file = st.file_uploader(
+        "Choose an image",
+        type=["jpg", "jpeg", "png", "webp"],
+        key="image_uploader"
+    )
+    if uploaded_file:
+        st.image(uploaded_file, caption="Preview", use_container_width=True)
+        image_question = st.text_input(
+            "Ask a question about this image (optional)",
+            placeholder="e.g. What could this rash be? Does this wound look infected?",
+            key="image_question"
+        )
+        if st.button("🔍 Analyze Image", use_container_width=True, type="primary"):
+            st.session_state.pending_image = uploaded_file.getvalue()
+            st.session_state.pending_image_type = uploaded_file.type
+            st.session_state.pending_prompt = image_question.strip() or "Please analyze this medical image and describe what you observe."
 
-    # ── RAG: Retrieve relevant doctors based on symptom similarity ──
+# ── 10. SEND MESSAGE ────────────────────────────────────────────
+def send_message(prompt, image_bytes=None, image_type=None):
+    # Display user message
+    with st.chat_message("user"):
+        if image_bytes:
+            st.image(image_bytes, caption="Uploaded Image", use_container_width=True)
+        st.markdown(prompt)
+
+    # Store in session
+    st.session_state.messages.append({
+        "role": "user",
+        "content": prompt,
+        "image": image_bytes
+    })
+
+    # RAG: Retrieve relevant doctors
     relevant_doctors = get_relevant_doctors(prompt)
     contextual_prompt = prompt
     if relevant_doctors:
         contextual_prompt += f"\n\n[Relevant doctors retrieved for these symptoms:\n{relevant_doctors}\nRecommend the most suitable one if appropriate.]"
 
-    # Build messages for Groq with full conversation history
+    # Build Groq messages
     groq_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    # Add prior conversation history (text only)
     for msg in st.session_state.messages[:-1]:
         groq_messages.append({"role": msg["role"], "content": msg["content"]})
-    groq_messages.append({"role": "user", "content": contextual_prompt})
+
+    # Build current user message
+    if image_bytes:
+        b64_image = base64.b64encode(image_bytes).decode("utf-8")
+        groq_messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{image_type};base64,{b64_image}"
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": contextual_prompt
+                }
+            ]
+        })
+        model = "meta-llama/llama-4-scout-17b-16e-instruct"  # Vision model
+    else:
+        groq_messages.append({"role": "user", "content": contextual_prompt})
+        model = "llama-3.3-70b-versatile"
 
     # Get response
     response = None
@@ -193,7 +242,7 @@ def send_message(prompt):
         with st.spinner("Thinking..."):
             try:
                 result = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model=model,
                     messages=groq_messages,
                     max_tokens=1024,
                 )
@@ -211,10 +260,12 @@ def send_message(prompt):
     if response:
         st.session_state.messages.append({"role": "assistant", "content": response})
 
-# ── 10. HANDLE INPUT ────────────────────────────────────────────
+# ── 11. HANDLE INPUT ────────────────────────────────────────────
 if "pending_prompt" in st.session_state:
     prompt = st.session_state.pop("pending_prompt")
-    send_message(prompt)
+    image_bytes = st.session_state.pop("pending_image", None)
+    image_type = st.session_state.pop("pending_image_type", None)
+    send_message(prompt, image_bytes, image_type)
 
 if prompt := st.chat_input("Describe your symptoms, ask about medicines, diet plans, or find a doctor..."):
     send_message(prompt)
