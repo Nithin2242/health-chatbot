@@ -60,12 +60,10 @@ if prompt := st.chat_input("Describe your symptoms, ask for a diet plan, or find
     if any(word in prompt.lower() for word in keywords):
         contextual_prompt += f"\n\n[System Note: The user needs medical care in {user_city}. Recommend 2-3 real, top-rated hospitals or clinics in {user_city} that specialize in their symptoms.]"
         
-    # Get AI response
+   # Get AI response
     with st.chat_message("assistant"):
         with st.spinner("Analyzing..."):
-            try:
-                response = st.session_state.chat_session.send_message(contextual_prompt)
-                st.markdown(response.text)
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
-            except Exception as e:
-                st.error("Whoops! The server is busy. Give it a few seconds and try again.")
+            # Raw call so we can see the exact error
+            response = st.session_state.chat_session.send_message(contextual_prompt)
+            st.markdown(response.text)
+            st.session_state.messages.append({"role": "assistant", "content": response.text})
