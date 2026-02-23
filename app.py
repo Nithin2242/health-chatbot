@@ -135,14 +135,12 @@ def send_message(prompt):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Add doctor context if needed
-    contextual_prompt = prompt
-    doctor_keywords = ["doctor", "specialist", "find", "hospital", "clinic",
-                       "neurologist", "cardiologist", "dermatologist",
-                       "gynecologist", "pediatrician", "psychiatrist",
-                       "orthopedic", "ophthalmologist", "nutritionist"]
-    if any(word in prompt.lower() for word in doctor_keywords):
-        contextual_prompt += f"\n\n[Local doctor directory:\n{get_doctors()}]"
+# Always inject doctor directory so AI can recommend based on symptoms
+    contextual_prompt = prompt + f"""
+
+[Local doctor directory — recommend the most suitable doctor based on the user's symptoms or needs. 
+Only suggest a doctor if it's relevant to what the user is describing. Do not list all doctors:
+{get_doctors()}]"""
 
     # Build messages list for Groq (includes full history)
     groq_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
