@@ -164,7 +164,7 @@ def send_message(prompt):
             for attempt in range(3):
                 try:
                     result = client.models.generate_content(
-                        model="gemini-2.0-flash",
+                        model="gemini-2.0-flash-lite",
                         contents=full_prompt
                     )
                     response = result.text
