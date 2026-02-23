@@ -1,131 +1,88 @@
 import os
 import sqlite3
-import time
 import streamlit as st
 import google.generativeai as genai
+from dotenv import load_dotenv
 
-# 1. Load API key
-genai.configure(api_key=st.secrets["AIzaSyBOIMc4waOX3Fn6Dm_H1AMv4msjEqVT3jM"])
+# --- Initialize Database ---
+from db_setup import setup_database
+setup_database()
 
-# 2. Page config
+# 1. Load API key securely
+load_dotenv()
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# 2. Set up the Streamlit Page
 st.set_page_config(page_title="AI Healthcare Assistant", page_icon="🩺")
 st.title("🩺 AI Healthcare Assistant")
 
-# 3. Sidebar
-with st.sidebar:
-    st.header("What I can help with")
-    st.markdown("- 🩻 Symptom checker\n- 🥗 Diet & nutrition plans\n- 🏥 Find local doctors\n- 💊 General medicine info")
-    if st.button("🗑️ Clear Chat"):
-        st.session_state.messages = []
-        st.session_state.chat_session = None
-        st.rerun()
+# --- Location Sidebar ---
+user_city = st.sidebar.selectbox(
+    "📍 Select your current city:",
+    ["Bangalore", "Mumbai", "Delhi", "Chennai"]
+)
 
-# 4. AI Persona
+# 3. Define the AI Persona
 system_instruction = """
-You are a helpful and cautious AI Healthcare Assistant. You can provide general dietary advice, check mild symptoms, and give standard information on medicines.
+You are a helpful and cautious AI Healthcare Assistant. You can provide general dietary advice, check mild symptoms, and give standard information on medicines. 
 CRITICAL RULES:
 1. Always include a short disclaimer that you are an AI and the user must consult a real doctor for medical advice.
 2. If the user asks for a doctor recommendation, use the local directory information provided in the prompt context to suggest a specialist.
 """
 
-# 5. Initialize Gemini Model
+# Initialize the Gemini Model
 model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash",
+    model_name="gemini-2.5-flash",
     system_instruction=system_instruction
 )
 
-# 6. Database setup
-def init_db():
+# 4. Helper function to fetch doctors from our SQLite database
+def get_local_doctors(city):
     conn = sqlite3.connect('healthcare.db')
     cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS doctors 
-                   (doctor_name TEXT, specialty TEXT,
-                    hospital_clinic TEXT, location TEXT, contact_number TEXT)''')
-    cursor.execute("SELECT COUNT(*) FROM doctors")
-    if cursor.fetchone()[0] == 0:
-        sample_doctors = [
-            ("Dr. Priya Sharma", "General Physician", "Apollo Clinic", "Bangalore", "080-12345678"),
-            ("Dr. Rajan Mehta", "Cardiologist", "Fortis Hospital", "Bangalore", "080-87654321"),
-            ("Dr. Anita Rao", "Neurologist", "Manipal Hospital", "Bangalore", "080-11223344"),
-            ("Dr. Suresh Kumar", "Dermatologist", "Columbia Asia", "Bangalore", "080-55667788"),
-            ("Dr. Meena Iyer", "Nutritionist", "Narayana Health", "Bangalore", "080-99887766"),
-        ]
-        cursor.executemany("INSERT INTO doctors VALUES (?,?,?,?,?)", sample_doctors)
-    conn.commit()
-    conn.close()
-
-def get_local_doctors():
-    conn = sqlite3.connect('healthcare.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT doctor_name, specialty, hospital_clinic, location, contact_number FROM doctors")
+    cursor.execute("SELECT doctor_name, specialty, hospital_clinic, location, contact_number FROM doctors WHERE city = ?", (city,))
     doctors = cursor.fetchall()
     conn.close()
+    
     doc_list = []
     for doc in doctors:
         doc_list.append(f"- {doc[0]} ({doc[1]}) at {doc[2]}, {doc[3]}. Contact: {doc[4]}")
     return "\n".join(doc_list)
 
-init_db()
-
-# 7. Session state
+# 5. Initialize Streamlit Session State for Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "chat_session" not in st.session_state or st.session_state.chat_session is None:
     st.session_state.chat_session = model.start_chat(history=[])
 
-# 8. Display chat history
+# Display existing chat history on app rerun
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# 9. Example prompts when chat is empty
-if not st.session_state.messages:
-    st.markdown("**Try asking:**")
-    cols = st.columns(3)
-    examples = ["I have a headache", "Suggest a diet plan", "Find a cardiologist"]
-    for col, ex in zip(cols, examples):
-        if col.button(ex):
-            st.session_state.messages.append({"role": "user", "content": ex})
-            st.rerun()
-
-# 10. Main chat loop
+# 6. The Main Chat Loop
 if prompt := st.chat_input("Describe your symptoms, ask for a diet plan, or find a doctor..."):
-
+    
+    # Display user prompt in UI
     with st.chat_message("user"):
         st.markdown(prompt)
+    
+    # Add to UI history
     st.session_state.messages.append({"role": "user", "content": prompt})
-
-    # Doctor lookup
+    
+    # Check if we need to query the doctor database
     contextual_prompt = prompt
-    keywords = ["find a doctor", "specialist", "recommend a doctor", "which doctor", "hospital"]
+    keywords = ["doctor", "specialist", "hospital", "clinic", "pain", "injury"]
+    
     if any(word in prompt.lower() for word in keywords):
-        doctor_data = get_local_doctors()
-        contextual_prompt += f"\n\n[System Note: Here is the local doctor directory:\n{doctor_data}\nRecommend a suitable one if applicable.]"
-
-    # Get response with error handling + retry
-    response = None
+        # Fetch doctors only for the selected city
+        doctor_data = get_local_doctors(user_city)
+        contextual_prompt += f"\n\n[System Note: The user may need a doctor. Here is the local directory for {user_city}:\n{doctor_data}\nRecommend a suitable one if applicable.]"
+        
+    # Get response from Gemini
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            for attempt in range(3):
-                try:
-                    response = st.session_state.chat_session.send_message(contextual_prompt)
-                    st.markdown(response.text)
-                    break
-                except Exception as e:
-                    error_msg = str(e)
-                    if "ResourceExhausted" in error_msg or "429" in error_msg:
-                        if attempt < 2:
-                            wait_time = (attempt + 1) * 10
-                            st.warning(f"⏳ Retrying in {wait_time} seconds...")
-                            time.sleep(wait_time)
-                        else:
-                            st.error("⚠️ API quota exceeded. Please create a new API key at aistudio.google.com and update it in Streamlit Secrets.")
-                    elif "InvalidArgument" in error_msg:
-                        st.error("⚠️ Invalid request. Please rephrase your message.")
-                        break
-                    else:
-                        st.error(f"⚠️ Something went wrong. Please try again.")
-                        break
-
-    if response:
-        st.session_state.messages.append({"role": "assistant", "content": response.text})
+        with st.spinner("Analyzing symptoms..."):
+            response = st.session_state.chat_session.send_message(contextual_prompt)
+        st.markdown(response.text)
+        
+    # Add response to UI history
+    st.session_state.messages.append({"role": "assistant", "content": response.text})
